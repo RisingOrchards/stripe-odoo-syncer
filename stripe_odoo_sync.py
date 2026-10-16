@@ -385,13 +385,16 @@ def key_domain(journal_id, op, value):
     return ["&", ("journal_id", "=", journal_id), "|", ("unique_import_id", op, value), ("ref", op, value)]
 
 
-def sync_start(odoo, journal_id, configured_start, overlap_days):
+def sync_start(odoo, journal_id, configured_start, overlap_days, today):
     last = odoo.call("account.bank.statement.line", "search_read",
                      domain=key_domain(journal_id, "=like", KEY_PREFIX + "%"),
                      fields=["date"], order="date desc", limit=1)
     start = configured_start
     if last:
-        start = max(start, date.fromisoformat(last[0]["date"]) - timedelta(days=overlap_days))
+        # A payout is dated on arrival, possibly days after it was created; never let such a
+        # future-dated line push the window past transactions that are not booked yet.
+        newest = min(date.fromisoformat(last[0]["date"]), today)
+        start = max(start, newest - timedelta(days=overlap_days))
     return start
 
 
@@ -406,7 +409,7 @@ def run(dry_run=False, since=None):
         start = date.fromisoformat(since)
     else:
         configured = date.fromisoformat(env("SYNC_START", required=True))
-        start = sync_start(odoo, journal_id, configured, int(env("SYNC_OVERLAP_DAYS", "3")))
+        start = sync_start(odoo, journal_id, configured, int(env("SYNC_OVERLAP_DAYS", "3")), datetime.now(tz).date())
     log.info("journal %r (id %s, %s); fetching Stripe activity since %s", journal_name, journal_id,
              journal_cur.upper(), start)
 

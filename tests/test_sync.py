@@ -8,7 +8,7 @@ import tempfile
 import unittest
 import urllib.parse
 from contextlib import redirect_stdout
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from unittest import mock
@@ -195,6 +195,16 @@ class TestSync(Base):
             self.assertEqual(s.main(), 1)
         self.assertEqual(sent[0]["To"], "alerts@example.com")
         self.assertIn("does not match Stripe", sent[0]["Subject"])
+
+    def test_window_start(self):
+        f = self.use(Fakes([], [0]))
+        odoo = s.Odoo("https://odoo.example", "db", "test-key")
+        floor = date(2026, 3, 1)
+        self.assertEqual(s.sync_start(odoo, 13, floor, 3, date(2026, 3, 25)), floor)  # empty journal
+        f.lines.append({"id": 1, "journal_id": 13, "date": "2026-03-20", "ref": "stripe:po_x", "statement_id": 1})
+        self.assertEqual(s.sync_start(odoo, 13, floor, 3, date(2026, 3, 25)), date(2026, 3, 17))
+        # newest line is a payout dated in the future: window still covers the last 3 days
+        self.assertEqual(s.sync_start(odoo, 13, floor, 3, date(2026, 3, 17)), date(2026, 3, 14))
 
     def test_dry_run_writes_nothing(self):
         f = self.use(Fakes(account(), [40000]))
